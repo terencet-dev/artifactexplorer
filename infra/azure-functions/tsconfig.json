@@ -1,0 +1,28 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "Node16",
+    "moduleResolution": "Node16",
+    "lib": ["ES2022"],
+    "outDir": "dist",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "noEmit": true,
+    "sourceMap": true,
+    "paths": {
+      "@/app/*": ["../../app/*"],
+      "@/package.json": ["../../package.json"]
+    },
+    "typeRoots": [
+      "./node_modules/@types"
+    ],
+    "baseUrl": "."
+  },
+  "include": [
+    "src/**/*.ts"
+  ],
+  "exclude": ["node_modules", "dist"]
+}

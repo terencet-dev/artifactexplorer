@@ -1,0 +1,293 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "description": "Artifact Explorer — Azure infrastructure for SBOM crawl. Supports three deployment types: functions-only (cron only), functions-and-database (cron + Azure PG), full (cron + Azure PG + App Service for hosting)."
+  },
+  "parameters": {
+    "deploymentType": {
+      "type": "string",
+      "defaultValue": "functions-only",
+      "allowedValues": [
+        "functions-only",
+        "functions-and-database",
+        "full"
+      ],
+      "metadata": {
+        "description": "functions-only: Azure Functions for cron only (use external DB). functions-and-database: Functions + Azure PostgreSQL. full: Functions + PostgreSQL + App Service for hosting."
+      }
+    },
+    "appNamePrefix": {
+      "type": "string",
+      "defaultValue": "my-artifact-explorer",
+      "metadata": {
+        "description": "Prefix for all resource names. Must be globally unique for Function App and App Service. CHANGE THIS to a unique value for your deployment."
+      }
+    },
+    "location": {
+      "type": "string",
+      "defaultValue": "westus2",
+      "metadata": {
+        "description": "Azure region. Choose the region closest to your database and registry."
+      }
+    },
+    "postgresAdminPassword": {
+      "type": "securestring",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Admin password for Azure Database for PostgreSQL. Required when deploymentType includes database."
+      }
+    },
+    "databaseUrl": {
+      "type": "securestring",
+      "defaultValue": "",
+      "metadata": {
+        "description": "External DATABASE_URL (e.g. Supabase). Used when deploymentType is functions-only."
+      }
+    },
+    "cronSecret": {
+      "type": "securestring",
+      "defaultValue": "",
+      "metadata": {
+        "description": "CRON_SECRET for authenticating crawl requests (used by App Service in full mode)."
+      }
+    }
+  },
+  "variables": {
+    "functionAppName": "[concat(parameters('appNamePrefix'), '-func')]",
+    "appServiceName": "[concat(parameters('appNamePrefix'), '-web')]",
+    "storageName": "[concat(replace(parameters('appNamePrefix'), '-', ''), 'stor')]",
+    "appInsightsName": "[concat(parameters('appNamePrefix'), '-insights')]",
+    "appServicePlanName": "[concat(parameters('appNamePrefix'), '-plan')]",
+    "functionPlanName": "[concat(parameters('appNamePrefix'), '-func-plan')]",
+    "postgresServerName": "[concat(parameters('appNamePrefix'), '-pg')]",
+    "postgresDbName": "app_db",
+    "postgresAdminUser": "postgres",
+    "deployDatabase": "[or(equals(parameters('deploymentType'), 'functions-and-database'), equals(parameters('deploymentType'), 'full'))]",
+    "deployAppService": "[equals(parameters('deploymentType'), 'full')]",
+    "internalDbUrl": "[if(variables('deployDatabase'), concat('postgresql://', variables('postgresAdminUser'), ':', parameters('postgresAdminPassword'), '@', variables('postgresServerName'), '.postgres.database.azure.com:5432/', variables('postgresDbName'), '?sslmode=require'), '')]",
+    "effectiveDbUrl": "[if(variables('deployDatabase'), variables('internalDbUrl'), parameters('databaseUrl'))]"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Storage/storageAccounts",
+      "apiVersion": "2023-01-01",
+      "name": "[variables('storageName')]",
+      "location": "[parameters('location')]",
+      "sku": { "name": "Standard_LRS" },
+      "kind": "StorageV2",
+      "properties": {
+        "supportsHttpsTrafficOnly": true,
+        "minimumTlsVersion": "TLS1_2"
+      }
+    },
+    {
+      "type": "Microsoft.Insights/components",
+      "apiVersion": "2020-02-02",
+      "name": "[variables('appInsightsName')]",
+      "location": "[parameters('location')]",
+      "kind": "web",
+      "properties": {
+        "Application_Type": "web",
+        "RetentionInDays": 30
+      }
+    },
+    {
+      "type": "Microsoft.Web/serverfarms",
+      "apiVersion": "2023-01-01",
+      "name": "[variables('functionPlanName')]",
+      "location": "[parameters('location')]",
+      "sku": {
+        "name": "Y1",
+        "tier": "Dynamic"
+      },
+      "properties": {
+        "reserved": true
+      }
+    },
+    {
+      "type": "Microsoft.Web/sites",
+      "apiVersion": "2023-01-01",
+      "name": "[variables('functionAppName')]",
+      "location": "[parameters('location')]",
+      "kind": "functionapp,linux",
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/serverfarms', variables('functionPlanName'))]",
+        "[resourceId('Microsoft.Storage/storageAccounts', variables('storageName'))]",
+        "[resourceId('Microsoft.Insights/components', variables('appInsightsName'))]"
+      ],
+      "properties": {
+        "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', variables('functionPlanName'))]",
+        "siteConfig": {
+          "linuxFxVersion": "Node|20",
+          "appSettings": [
+            {
+              "name": "AzureWebJobsStorage",
+              "value": "[concat('DefaultEndpointsProtocol=https;AccountName=', variables('storageName'), ';AccountKey=', listKeys(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), '2023-01-01').keys[0].value)]"
+            },
+            {
+              "name": "FUNCTIONS_EXTENSION_VERSION",
+              "value": "~4"
+            },
+            {
+              "name": "FUNCTIONS_WORKER_RUNTIME",
+              "value": "node"
+            },
+            {
+              "name": "WEBSITE_NODE_DEFAULT_VERSION",
+              "value": "~20"
+            },
+            {
+              "name": "APPINSIGHTS_INSTRUMENTATIONKEY",
+              "value": "[reference(resourceId('Microsoft.Insights/components', variables('appInsightsName'))).InstrumentationKey]"
+            },
+            {
+              "name": "DATABASE_URL",
+              "value": "[variables('effectiveDbUrl')]"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "condition": "[variables('deployDatabase')]",
+      "type": "Microsoft.DBforPostgreSQL/flexibleServers",
+      "apiVersion": "2023-03-01-preview",
+      "name": "[variables('postgresServerName')]",
+      "location": "[parameters('location')]",
+      "sku": {
+        "name": "Standard_B1ms",
+        "tier": "Burstable"
+      },
+      "properties": {
+        "version": "16",
+        "administratorLogin": "[variables('postgresAdminUser')]",
+        "administratorLoginPassword": "[parameters('postgresAdminPassword')]",
+        "storage": {
+          "storageSizeGB": 32
+        },
+        "backup": {
+          "backupRetentionDays": 7,
+          "geoRedundantBackup": "Disabled"
+        },
+        "highAvailability": {
+          "mode": "Disabled"
+        }
+      }
+    },
+    {
+      "condition": "[variables('deployDatabase')]",
+      "type": "Microsoft.DBforPostgreSQL/flexibleServers/databases",
+      "apiVersion": "2023-03-01-preview",
+      "name": "[concat(variables('postgresServerName'), '/', variables('postgresDbName'))]",
+      "dependsOn": [
+        "[resourceId('Microsoft.DBforPostgreSQL/flexibleServers', variables('postgresServerName'))]"
+      ],
+      "properties": {
+        "charset": "UTF8",
+        "collation": "en_US.utf8"
+      }
+    },
+    {
+      "condition": "[variables('deployDatabase')]",
+      "type": "Microsoft.DBforPostgreSQL/flexibleServers/firewallRules",
+      "apiVersion": "2023-03-01-preview",
+      "name": "[concat(variables('postgresServerName'), '/AllowAzureServices')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.DBforPostgreSQL/flexibleServers', variables('postgresServerName'))]"
+      ],
+      "properties": {
+        "startIpAddress": "0.0.0.0",
+        "endIpAddress": "0.0.0.0"
+      }
+    },
+    {
+      "condition": "[variables('deployDatabase')]",
+      "type": "Microsoft.DBforPostgreSQL/flexibleServers/firewallRules",
+      "apiVersion": "2023-03-01-preview",
+      "name": "[concat(variables('postgresServerName'), '/AllowExternalAccess')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.DBforPostgreSQL/flexibleServers', variables('postgresServerName'))]"
+      ],
+      "properties": {
+        "startIpAddress": "0.0.0.1",
+        "endIpAddress": "255.255.255.255"
+      }
+    },
+    {
+      "condition": "[variables('deployAppService')]",
+      "type": "Microsoft.Web/serverfarms",
+      "apiVersion": "2023-01-01",
+      "name": "[variables('appServicePlanName')]",
+      "location": "[parameters('location')]",
+      "sku": {
+        "name": "B1",
+        "tier": "Basic"
+      },
+      "properties": {
+        "reserved": true
+      }
+    },
+    {
+      "condition": "[variables('deployAppService')]",
+      "type": "Microsoft.Web/sites",
+      "apiVersion": "2023-01-01",
+      "name": "[variables('appServiceName')]",
+      "location": "[parameters('location')]",
+      "kind": "app,linux",
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/serverfarms', variables('appServicePlanName'))]",
+        "[resourceId('Microsoft.Insights/components', variables('appInsightsName'))]"
+      ],
+      "properties": {
+        "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', variables('appServicePlanName'))]",
+        "siteConfig": {
+          "linuxFxVersion": "Node|20",
+          "appCommandLine": "npm run start",
+          "appSettings": [
+            {
+              "name": "DATABASE_URL",
+              "value": "[variables('effectiveDbUrl')]"
+            },
+            {
+              "name": "CRON_SECRET",
+              "value": "[parameters('cronSecret')]"
+            },
+            {
+              "name": "SBOM_CRAWL_PROVIDER",
+              "value": "azure"
+            },
+            {
+              "name": "APPINSIGHTS_INSTRUMENTATIONKEY",
+              "value": "[reference(resourceId('Microsoft.Insights/components', variables('appInsightsName'))).InstrumentationKey]"
+            },
+            {
+              "name": "WEBSITE_NODE_DEFAULT_VERSION",
+              "value": "~20"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "outputs": {
+    "functionAppName": {
+      "type": "string",
+      "value": "[variables('functionAppName')]"
+    },
+    "functionAppUrl": {
+      "type": "string",
+      "value": "[concat('https://', variables('functionAppName'), '.azurewebsites.net')]"
+    },
+    "databaseUrl": {
+      "condition": "[variables('deployDatabase')]",
+      "type": "string",
+      "value": "[variables('internalDbUrl')]"
+    },
+    "appServiceUrl": {
+      "condition": "[variables('deployAppService')]",
+      "type": "string",
+      "value": "[concat('https://', variables('appServiceName'), '.azurewebsites.net')]"
+    }
+  }
+}

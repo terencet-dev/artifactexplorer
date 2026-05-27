@@ -1,0 +1,61 @@
+name: Feature request
+description: Suggest a new capability or improvement.
+title: "[feature] "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to suggest an improvement. Please describe the problem you're trying to solve before proposing a specific solution — it helps me evaluate whether the feature fits the project.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user need or workflow is currently painful or impossible?
+      placeholder: "When I try to ..., I have to ... which is slow / confusing / unsafe because ..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: How would you like this to work? Be concrete — UI sketches, API shapes, env-var names, etc.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What other approaches did you think about, and why are they worse?
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Scope
+      description: How large do you think this is?
+      options:
+        - Small (a few hours of work)
+        - Medium (a day or two)
+        - Large (a significant project)
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Screenshots, links to related projects, anything else.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-submission checks
+      options:
+        - label: I have searched existing issues and discussions and this is not a duplicate.
+          required: true
+        - label: I understand this is a personal open-source project and there is no SLA for feature delivery.
+          required: true

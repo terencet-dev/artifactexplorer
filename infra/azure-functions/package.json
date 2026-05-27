@@ -1,0 +1,27 @@
+{
+  "name": "artifact-explorer-azure-functions",
+  "version": "1.0.0",
+  "description": "Azure Functions timer trigger for SBOM crawl — delegates to shared crawl engine",
+  "main": "dist/src/functions/sbomCrawl.js",
+  "scripts": {
+    "build": "node esbuild.config.mjs",
+    "watch": "node esbuild.config.mjs --watch",
+    "typecheck": "tsc --noEmit",
+    "prestart": "npm run build",
+    "start": "func start",
+    "test": "echo \"Tests not yet configured\" && exit 0"
+  },
+  "dependencies": {
+    "@azure/functions": "^4.5.0",
+    "pg": "^8.20.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "@types/pg": "^8.18.0",
+    "esbuild": "^0.27.3",
+    "typescript": "^5"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "description": "Option 2: Azure Functions for cron only. Database is external (Supabase). Set databaseUrl to your Supabase connection string."
+  },
+  "parameters": {
+    "deploymentType": { "value": "functions-only" },
+    "appNamePrefix": { "value": "artifact-explorer" },
+    "location": { "value": "westus2" },
+    "databaseUrl": { "value": "" }
+  }
+}

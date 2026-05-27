@@ -1,0 +1,87 @@
+name: Azure Functions CI
+
+on:
+  push:
+    paths:
+      - 'app/lib/crawlEngine.ts'
+      - 'app/utils/sbomDb.ts'
+      - 'app/utils/sbomParser.ts'
+      - 'app/utils/constants.ts'
+      - 'app/utils/rateLimiter.ts'
+      - 'app/utils/error.ts'
+      - 'app/types/registry.ts'
+      - 'infra/azure-functions/**'
+      - 'docs/schema.sql'
+      - 'docs/azure/**'
+  pull_request:
+    paths:
+      - 'app/lib/crawlEngine.ts'
+      - 'app/utils/sbomDb.ts'
+      - 'app/utils/sbomParser.ts'
+      - 'app/utils/constants.ts'
+      - 'app/utils/rateLimiter.ts'
+      - 'app/utils/error.ts'
+      - 'app/types/registry.ts'
+      - 'infra/azure-functions/**'
+      - 'docs/schema.sql'
+      - 'docs/azure/**'
+
+jobs:
+  build:
+    name: Build Azure Functions
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infra/azure-functions
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: infra/azure-functions/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install root type definitions
+        run: cd ../.. && npm install --no-save @types/pg @types/node
+        working-directory: infra/azure-functions
+
+      - name: Build (esbuild bundle)
+        run: npm run build
+
+      - name: Type check (catches shared code drift)
+        run: npx tsc --noEmit
+
+  validate-arm:
+    name: Validate ARM Template
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/login@v2
+        if: ${{ env.AZURE_CREDENTIALS != '' }}
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+        env:
+          AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Validate ARM template (option 2)
+        if: ${{ env.AZURE_CREDENTIALS != '' }}
+        run: |
+          az deployment group validate \
+            --resource-group "${AZURE_VALIDATE_RG:-artifact-explorer-ci}" \
+            --template-file docs/azure/azuredeploy.json \
+            --parameters docs/azure/parameters.option2.json \
+            --parameters databaseUrl="postgresql://test:test@localhost:5432/test"
+        env:
+          AZURE_CREDENTIALS: ${{ secrets.AZURE_CREDENTIALS }}
+          AZURE_VALIDATE_RG: ${{ vars.AZURE_VALIDATE_RG }}
+
+      - name: Lint ARM template (no Azure login needed)
+        run: |
+          echo "Checking ARM template is valid JSON..."
+          python3 -c "import json; json.load(open('docs/azure/azuredeploy.json'))"
+          echo "ARM template JSON is valid."

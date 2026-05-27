@@ -1,0 +1,13 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "description": "Option 3: Azure Functions + Azure Database for PostgreSQL. No external database needed."
+  },
+  "parameters": {
+    "deploymentType": { "value": "functions-and-database" },
+    "appNamePrefix": { "value": "artifact-explorer" },
+    "location": { "value": "westus2" },
+    "postgresAdminPassword": { "value": "" }
+  }
+}
