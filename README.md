@@ -137,8 +137,11 @@ The following variables enable cross-repository SBOM search. If not set, the app
 
 | Variable | Required for | Description |
 |----------|-------------|-------------|
+| `NEXT_PUBLIC_SBOM_SEARCH_VISIBLE` | SBOM Search | Build-time flag. Set to `true` to expose the SBOM Search nav item and pages; unset (or any other value) hides the feature entirely. Changing it requires a rebuild/redeploy. |
 | `DATABASE_URL` | SBOM Search | PostgreSQL connection string (Supabase, Azure PG, or any PostgreSQL 14+). |
 | `CRON_SECRET` | SBOM Search | Secret string used to authenticate cron crawl requests. Set any secure random value. |
+| `CRAWL_ENABLED` | Crawl | Master switch — must be `true` for the crawl endpoint to ingest anything. Defaults to `false`, so a fresh deployment never crawls until you opt in. |
+| `CRAWL_DEFAULT_REGISTRY_SERVER` / `CRAWL_DEFAULT_REGISTRY_ID` | Crawl | Which OCI registry the scheduled crawl targets (e.g. `mcr.microsoft.com`). No default — both must be set for the crawl to do anything. |
 | `SBOM_CRAWL_PROVIDER` | Multi-provider | Set to `azure` to delegate crawls to Azure Functions. Omit or set to `vercel` for Vercel Cron (default). |
 | `DATABASE_SSL_CA` | Azure PG | CA certificate for strict SSL. Omit for Supabase (uses permissive SSL by default). |
 | `DATABASE_SSL_MODE` | Local dev | Set to `disable` for local PostgreSQL without SSL. |
@@ -167,8 +170,16 @@ Replace `<YOUR_GH_USER>` with your GitHub username/org and select the `deploymen
 
 1. **<https://supabase.com>** → Create a project → SQL Editor → Run [`docs/schema.sql`](docs/schema.sql) from this repo
 2. **Supabase Dashboard** → Project Settings → Database → copy the **connection string (URI, Transaction mode, port 6543)**
-3. **Vercel Dashboard** → Project Settings → Environment Variables → add `DATABASE_URL` and `CRON_SECRET`
-4. Deploy — the cron job starts automatically, the "SBOM Search" nav link appears, and the index begins building
+3. **Vercel Dashboard** → Project Settings → Environment Variables → add `DATABASE_URL`, `CRON_SECRET`, `NEXT_PUBLIC_SBOM_SEARCH_VISIBLE=true`, `CRAWL_ENABLED=true`, and the crawl target (`CRAWL_DEFAULT_REGISTRY_SERVER` / `CRAWL_DEFAULT_REGISTRY_ID`)
+4. **Enable Vercel Cron** — the OSS release ships with no `crons` block (cron is opt-in), so add one to [`vercel.json`](vercel.json):
+   ```json
+   {
+     "crons": [
+       { "path": "/api/sbom-index/crawl?partition=0&of=2", "schedule": "*/2 * * * *" }
+     ]
+   }
+   ```
+5. Deploy — the "SBOM Search" nav link appears and the index begins building during the next crawl window (`CRAWL_HOUR_START`–`CRAWL_HOUR_END`, default 01:00–14:00 UTC).
 
 > **Without these variables**: the app works perfectly as a registry explorer. No errors, no broken pages — SBOM Search simply doesn't appear.
 >

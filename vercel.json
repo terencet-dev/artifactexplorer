@@ -1,5 +1,1 @@
-{
-  "$comment": "Vercel Cron disabled by default in the OSS release. To enable periodic SBOM crawling, add a crons block here AND set CRAWL_ENABLED=true in your environment. See README.md > 'Enabling SBOM crawling' for details.",
-  "$comment2": "Example:",
-  "$comment3": "  \"crons\": [{ \"path\": \"/api/sbom-index/crawl?partition=0&of=2\", \"schedule\": \"*/2 * * * *\" }]"
-}
+{}

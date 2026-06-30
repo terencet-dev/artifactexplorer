@@ -4,12 +4,12 @@ Thank you for helping keep Artifact Explorer and its users safe.
 
 ## Supported Versions
 
-Artifact Explorer is in **public preview** (`v0.1.x-public-preview`). Only the latest tagged release receives security updates. Pre-1.0 there is no LTS branch.
+Artifact Explorer follows [Semantic Versioning](https://semver.org/). Only the latest tagged release (currently the **1.0.x** line) receives security updates; there is no separate LTS branch.
 
 | Version             | Supported          |
 | ------------------- | ------------------ |
-| `0.1.x-public-preview` | ✅                 |
-| earlier prototypes  | ❌                 |
+| `1.0.x` | ✅                 |
+| `0.1.x-public-preview` and earlier | ❌                 |
 
 ## Reporting a Vulnerability
 

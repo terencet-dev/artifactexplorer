@@ -1,6 +1,6 @@
 {
   "name": "artifactexplorer",
-  "version": "0.1.0-public-preview",
+  "version": "1.0.1",
   "description": "A user-friendly explorer for OCI-compatible container registries",
   "private": false,
   "author": "Terence Truong <48969648+terencet-dev@users.noreply.github.com>",

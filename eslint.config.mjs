@@ -1,10 +1,15 @@
 import nextCoreWebVitals from "eslint-config-next/core-web-vitals";
 import nextTypescript from "eslint-config-next/typescript";
+import reactHooks from "eslint-plugin-react-hooks";
 
 const eslintConfig = [
   ...nextCoreWebVitals,
   ...nextTypescript,
   {
+    // eslint-config-next registers react-hooks inside a files-scoped preset
+    // object, so our own override objects below can't resolve `react-hooks/*`
+    // rules under ESLint 9 flat config unless we register the plugin here too.
+    plugins: { "react-hooks": reactHooks },
     rules: {
       "react/no-unescaped-entities": "off",
       "react-hooks/exhaustive-deps": "warn",

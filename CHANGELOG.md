@@ -5,6 +5,23 @@ All notable changes to **Artifact Explorer** are documented in this file.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] - 2026-06-30
+
+### Fixed
+
+- **Vercel deployment validation** — removed the `$comment`/`$comment2`/`$comment3` pseudo-keys from `vercel.json`. JSON has no comment syntax, and Vercel validates `vercel.json` against a strict schema that rejects unknown keys, so these caused deploys to fail with `Invalid request: should NOT have additional property "$comment"`. The file is now a valid empty config (`{}`); Vercel Cron remains opt-in.
+- **ESLint flat-config crash** — `eslint.config.mjs` referenced `react-hooks/*` rules without registering the `react-hooks` plugin, which under ESLint 9 flat config crashes `eslint .` (run by the `prebuild` hook) with *"could not find plugin react-hooks"* and blocked `npm run build`. The plugin is now registered in the config.
+
+### Changed
+
+- **Privacy and Terms pages** now ship finalized content with a fixed effective date (June 30, 2026), including the Microsoft Clarity third-party disclosure, replacing the environment-configured template scaffolding and the "replace before deploying" banner. As a result `NEXT_PUBLIC_PRIVACY_EFFECTIVE_DATE`, `NEXT_PUBLIC_TERMS_EFFECTIVE_DATE`, and `NEXT_PUBLIC_CONTACT_EMAIL` are no longer used and have been removed from `.env.example`.
+
+### Documentation
+
+- Clarified in the README that SBOM Search and the crawl are **opt-in**. Corrected the Option 1 (Vercel Cron) setup steps, which previously implied the cron "starts automatically" — the OSS release ships without a `crons` block, so enabling it requires adding one to `vercel.json` **and** setting `CRAWL_ENABLED=true`.
+- Documented the previously-missing `NEXT_PUBLIC_SBOM_SEARCH_VISIBLE`, `CRAWL_ENABLED`, and crawl-target (`CRAWL_DEFAULT_REGISTRY_SERVER` / `CRAWL_DEFAULT_REGISTRY_ID`) environment variables in the README, aligning it with `.env.example`.
+- Updated `SECURITY.md` and the bug-report issue template to reference the **1.0.x** release line instead of the retired `0.1.x-public-preview` preview tag.
+
 ## [1.0.0] - 2026-05-27
 
 Initial public release.
