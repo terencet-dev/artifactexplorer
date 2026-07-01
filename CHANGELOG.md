@@ -1,9 +1,23 @@
 # Changelog
 
-All notable changes to **Artifact Explorer** are documented in this file.
+## [1.0.3] - 2026-07-01
 
-The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+### Fixed
+
+- **Footer pushed below the fold on the connect flow** — the registry-authentication and connect pages (`/connect`, `/connect/auth`, `/connect/noauth`) set the content area to `min-h-[calc(100vh-72px)]`, which only subtracted an approximate header height and ignored both the footer and the `<main>` vertical padding. The stacked layout therefore exceeded the viewport by ~85 px and the footer could only be reached by scrolling. The pages now use `flex-grow` (matching the landing page), so the content fills exactly the space between header and footer and the footer stays on-screen.
+- **Hydration mismatch warning from browser extensions** — extensions that inject attributes onto `<body>` before React hydrates (e.g. `wotdisconnected`) triggered a React hydration-mismatch console error. Added `suppressHydrationWarning` to `<body>` (the `<html>` element already had it).
+
+### Changed
+
+- The **anonymous registry** connection form now prefills the *Registry Login Server URL* with `mcr.microsoft.com` (still fully editable and clearable) to speed up the most common case.
+- The registry-authentication / connect pages (`/connect`, `/connect/auth`, `/connect/noauth`) no longer use their own background gradient — they now inherit the same background as the rest of the app. This also removes a faint horizontal line that appeared just above the footer, caused by the gradient ending in the footer's color while the layout's padding strip sat a shade darker between them.
+- Removed the now-redundant top border on the footer.
+- Removed the "Keep a Changelog / Semantic Versioning" preamble from the in-app changelog modal.
+- The changelog modal's **Current** badge no longer shows the `v` prefix (e.g. `Current: 1.0.3`).
+
+### Security
+
+- Resolved all three moderate `npm audit` advisories → **0 vulnerabilities**. Updated `js-yaml` (quadratic-complexity DoS in merge-key handling, [GHSA-h67p-54hq-rp68](https://github.com/advisories/GHSA-h67p-54hq-rp68)) and pinned Next.js's bundled `postcss` to the patched `8.5.x` line via a package.json `overrides` entry (XSS via unescaped `</style>` in CSS stringify output, [GHSA-qx2v-qp2m-jg93](https://github.com/advisories/GHSA-qx2v-qp2m-jg93)). The override avoids the `npm audit fix --force` path, which would have downgraded Next.js from 16 to 9.x.
 
 ## [1.0.2] - 2026-06-30
 

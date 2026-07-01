@@ -8,7 +8,7 @@ import RegistryConnectionError from '@/app/components/RegistryConnectionError';
 
 export default function NoAuthConnectPage() {
   const router = useRouter();
-  const [registryLoginServer, setRegistryLoginServer] = useState('');
+  const [registryLoginServer, setRegistryLoginServer] = useState('mcr.microsoft.com');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const [showConnectionError, setShowConnectionError] = useState(false);
@@ -71,7 +71,7 @@ export default function NoAuthConnectPage() {
   };
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-[calc(100vh-72px)] p-6 bg-gradient-to-b from-gray-50 to-gray-100 dark:from-slate-900 dark:to-slate-800">
+    <div className="flex flex-col items-center justify-center flex-grow w-full p-6">
       <div className="w-full max-w-lg p-8 bg-white dark:bg-slate-800 rounded-lg shadow-xl border border-gray-200 dark:border-gray-700">
         <h2 className="text-2xl font-semibold mb-6 text-center text-primaryBlue dark:text-blue-400">Connect to Anonymous Registry</h2>
         

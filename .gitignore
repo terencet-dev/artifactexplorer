@@ -75,3 +75,4 @@ id_rsa.pub
 
 # Local environment overrides
 .env
+.gstack/
