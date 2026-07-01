@@ -112,7 +112,7 @@ export default function RootLayout({
           </Script>
         )}
       </head>
-      <body className={`${geistSans.variable} ${geistMono.variable} antialiased min-h-screen flex flex-col`}>
+      <body suppressHydrationWarning className={`${geistSans.variable} ${geistMono.variable} antialiased min-h-screen flex flex-col`}>
         <Providers>
           <ClarityAnalytics />
           <div id="app-container" className="flex flex-col min-h-screen dark:bg-slate-900 dark:text-white" style={{ transition: "background-color 0.3s ease, color 0.3s ease" }}>

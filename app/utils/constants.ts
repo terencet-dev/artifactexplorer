@@ -35,7 +35,7 @@ export const REGISTRY_EVENTS = {
 
 // Application version (single source of truth: package.json)
 import pkg from '@/package.json';
-export const APP_VERSION = `v${pkg.version}`;
+export const APP_VERSION = pkg.version;
 
 // Known SBOM artifact media types
 export const SBOM_ARTIFACT_TYPES = [
