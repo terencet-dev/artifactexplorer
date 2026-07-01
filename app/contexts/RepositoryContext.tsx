@@ -7,7 +7,6 @@ import { devLog } from '../utils/devLog';
 
 interface RepositoryContextType {
   repositories: Repository[];
-  filteredRepositories: Repository[];
   registries: Registry[];
   isLoading: boolean;
   searchQuery: string;
@@ -16,7 +15,6 @@ interface RepositoryContextType {
   registryRepoCounts: Record<string, number>;
   currentPage: number;
   setRepositories: (repos: Repository[]) => void;
-  setFilteredRepositories: (repos: Repository[]) => void;
   setRegistries: (registries: Registry[]) => void;
   setIsLoading: (loading: boolean) => void;
   setSearchQuery: (query: string) => void;
@@ -37,7 +35,6 @@ interface RepositoryContextType {
 
 const defaultState: RepositoryContextType = {
   repositories: [],
-  filteredRepositories: [],
   registries: [],
   isLoading: true,
   searchQuery: '',
@@ -46,7 +43,6 @@ const defaultState: RepositoryContextType = {
   registryRepoCounts: {},
   currentPage: 1,
   setRepositories: () => {},
-  setFilteredRepositories: () => {},
   setRegistries: () => {},
   setIsLoading: () => {},
   setSearchQuery: () => {},
@@ -70,7 +66,6 @@ export function useRepositoryContext() {
 
 export const RepositoryProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [repositories, setRepositories] = useState<Repository[]>([]);
-  const [filteredRepositories, setFilteredRepositories] = useState<Repository[]>([]);
   const [registries, setRegistries] = useState<Registry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -107,7 +102,6 @@ export const RepositoryProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     }
     
     setRepositories([]);
-    setFilteredRepositories([]);
     setRegistries([]);
     setIsLoading(true);
     setSearchQuery('');
@@ -187,7 +181,6 @@ export const RepositoryProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   const value = {
     repositories,
-    filteredRepositories,
     registries,
     isLoading,
     searchQuery,
@@ -196,7 +189,6 @@ export const RepositoryProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     registryRepoCounts,
     currentPage,
     setRepositories,
-    setFilteredRepositories,
     setRegistries,
     setIsLoading,
     setSearchQuery,

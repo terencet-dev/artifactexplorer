@@ -43,6 +43,7 @@ infra/azure-functions/dist/
 # Playwright
 /playwright-report/
 /test-results/
+/.playwright-mcp/
 
 # Local AI tooling
 /.claude/

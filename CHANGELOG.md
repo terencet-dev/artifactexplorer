@@ -5,6 +5,16 @@ All notable changes to **Artifact Explorer** are documented in this file.
 The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.2] - 2026-06-30
+
+### Fixed
+
+- **Search reset when paginating the repository catalog** — on registries large enough to span multiple pages (e.g. `mcr.microsoft.com`), searching the catalog and then moving to the next page reverted the results to the full, unfiltered list. The displayed list was stored as state and kept in sync by competing effects, one of which recomputed it on every page change filtered only by registry — ignoring the active search query — and, by effect-ordering, overwrote the search-filtered page. The displayed list is now derived purely from the catalog, the active filters, and the current page (a single `useMemo` over a new `selectRepositories` helper), so the search is retained across pagination. A Playwright regression test (`e2e/search-pagination.spec.ts`) covers the search-then-paginate flow.
+
+### Changed
+
+- The catalog now sorts repositories by name in single-registry ("current") view for consistency with combined ("all") view, applies the same name-and-registry match for "All" search across every code path, and shows an empty state (rather than the full unfiltered list) for a registry with no matching repositories.
+
 ## [1.0.1] - 2026-06-30
 
 ### Fixed

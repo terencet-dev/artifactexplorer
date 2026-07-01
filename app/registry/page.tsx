@@ -13,6 +13,7 @@ import registryService from '@/app/services/registryService';
 import SessionInfo from '@/app/components/SessionInfo';
 import { useRepositoryContext } from '@/app/contexts/RepositoryContext';
 import { REGISTRY_EVENTS } from '@/app/utils/constants';
+import { selectRepositories } from '@/app/utils/repositorySelect';
 
 // Track in-flight requests to prevent duplicates
 const pendingRequests = new Map<string, Promise<any>>();
@@ -36,7 +37,6 @@ function RegistryPageContent() {
   // Use the shared context for state
   const {
     repositories: allRepositories,
-    filteredRepositories: displayedRepos,
     registries: availableRegistries,
     isLoading: loading,
     searchQuery,
@@ -45,7 +45,6 @@ function RegistryPageContent() {
     registryRepoCounts,
     currentPage,
     setRepositories: setAllRepositories,
-    setFilteredRepositories: setDisplayedRepos,
     setRegistries: setAvailableRegistries,
     setIsLoading: setLoading,
     setSearchQuery,
@@ -62,7 +61,39 @@ function RegistryPageContent() {
   const [displayedRegistries, setDisplayedRegistries] = useState<Registry[]>([]);
   const [initialLoadComplete, setInitialLoadComplete] = useState(false);
   const pageSize = 20;
-  
+
+  // The displayed repositories are DERIVED from the catalog + filters + page, in
+  // a single place. Because this is a pure derivation (not state synced by
+  // effects), nothing can clobber the search filter when paging — which was the
+  // root cause of "next page resets the search".
+  const currentRegistryId = registryFilter || registryService.getCurrentRegistryId() || null;
+  const {
+    filtered: filteredRepositories,
+    totalPages: filteredTotalPages,
+    pageItems: displayedRepos,
+  } = useMemo(
+    () =>
+      selectRepositories({
+        allRepositories,
+        searchQuery,
+        searchType,
+        viewMode,
+        currentRegistryId,
+        currentPage,
+        pageSize,
+      }),
+    [allRepositories, searchQuery, searchType, viewMode, currentRegistryId, currentPage, pageSize],
+  );
+
+  // Keep the page number in range when the filtered set shrinks (e.g. toggling
+  // view mode or switching registry without an explicit page reset) so the
+  // pagination footer/buttons stay consistent with the displayed slice.
+  useEffect(() => {
+    if (filteredTotalPages > 0 && currentPage > filteredTotalPages) {
+      setCurrentPage(filteredTotalPages);
+    }
+  }, [currentPage, filteredTotalPages, setCurrentPage]);
+
   // Add loadingInitiated ref at the component level
   const prevSearchType = useRef(searchType);
   const prevDisplayedRegistriesLength = useRef(0);
@@ -188,94 +219,60 @@ function RegistryPageContent() {
     // Update last loaded registry
     (window as any).__lastLoadedRegistryId = currentRegistryId;
     
-    // For view mode changes with existing data, just filter what we have
+    // For view mode / registry changes with existing data, no refetch is needed:
+    // the derived `displayedRepos` memo already reflects the new view mode and
+    // registry. Just mark the load complete.
     if ((isViewModeChange || isRegistryChange) && allRepositories.length > 0) {
       console.log(`${isViewModeChange ? 'View mode change' : 'Registry change'} detected with existing data, filtering without full reload`);
-      
-    setLoading(true);
-      
-      try {
-        // Get current registry
-        const currentRegistry = registryService.getCurrentRegistry();
-        
-        // Filter repositories based on view mode
-        if (viewMode === 'current' && currentRegistry) {
-          // Filter to only show repos from current registry
-          const filteredRepos = allRepositories.filter(
-            (repo: Repository) => repo.registryId === currentRegistry.id
-          );
-          
-          // Apply pagination
-          const startIndex = (currentPage - 1) * pageSize;
-          const endIndex = startIndex + pageSize;
-          setDisplayedRepos(filteredRepos.slice(startIndex, endIndex));
-          
-          console.log(`Filtered to ${filteredRepos.length} repositories for current registry from memory`);
-        } else {
-          // Show all repositories
-          const startIndex = (currentPage - 1) * pageSize;
-          const endIndex = startIndex + pageSize;
-          setDisplayedRepos(allRepositories.slice(startIndex, endIndex));
-          
-          console.log(`Showing all ${allRepositories.length} repositories from memory`);
-        }
-        
-        // Mark load as complete
-        setInitialLoadComplete(true);
-      } catch (error) {
-        console.error('Error filtering repositories:', error);
-      } finally {
-        setLoading(false);
-      }
-      
-      // If this was a registry change but the registry isn't found in memory, continue with load
+      setInitialLoadComplete(true);
+
+      // If this was a registry change but the registry isn't in memory, continue with the load
       if (isRegistryChange) {
         const currentRegistry = registryService.getCurrentRegistry();
         const hasReposForCurrentRegistry = allRepositories.some(
           repo => repo.registryId === currentRegistry?.id
         );
-        
+
         // If we don't have any repositories for this registry, continue with the load
         if (!hasReposForCurrentRegistry) {
           console.log('No repositories found in memory for selected registry, continuing with load');
         } else {
-          // Otherwise we've successfully loaded from memory, skip the rest
-        return;
+          // Otherwise we already have the data in memory, skip the rest
+          return;
         }
       } else {
         // For view mode changes, always skip the rest
         return;
       }
-      }
+    }
 
     // If registry has changed, log it and clear all cached repositories to force a reload
     if (isRegistryChange) {
       console.log(`Registry changed from ${lastLoadedRegistryId} to ${currentRegistryId}, clearing cache and forcing fresh load`);
       
-      // Clear filtered repo data to ensure fresh load
+      // Clear repo data to ensure fresh load
       setAllRepositories([]);
-      setDisplayedRepos([]);
-      
+
       // Add a small delay to ensure state is updated before proceeding
       await new Promise(resolve => setTimeout(resolve, 50));
     }
-    
-    // Prevent redundant loads if we're both actively loading AND have data already displayed
+
+    // Prevent redundant loads if we're both actively loading AND already have data
     // BUT always allow loads when switching registries
     const isAlreadyLoading = loading;
-    const hasDisplayedData = displayedRepos.length > 0;
-    
+    const hasDisplayedData = allRepositories.length > 0;
+
     // Check if we recently started loading (within 3 seconds)
     const now = Date.now();
     const lastLoadTimestamp = (window as any).__loadingState?.timestamp || 0;
     const loadingJustStarted = (now - lastLoadTimestamp) < 3000;
-    
+
     // Track loading state for debugging
     if (typeof window !== 'undefined') {
       (window as any).__loadingState = {
         loading: isAlreadyLoading,
         timestamp: isAlreadyLoading ? now : lastLoadTimestamp,
-        displayedReposCount: displayedRepos.length,
+        displayedReposCount: allRepositories.length,
         currentRegistryId
       };
     }
@@ -291,7 +288,7 @@ function RegistryPageContent() {
         loadingJustStarted,
         isRegistryChange,
         timeSinceLastLoad: now - lastLoadTimestamp,
-        displayedRepos: displayedRepos.length
+        repositories: allRepositories.length
       });
       return;
     }
@@ -323,77 +320,43 @@ function RegistryPageContent() {
       
       // Check if we really have valid repositories for the current registry
       const currentRegistry = registryService.getCurrentRegistry();
-      const hasValidCachedDataForCurrentRegistry = 
+      const hasValidCachedDataForCurrentRegistry =
         !isRegistryChange && // Never use cache for registry changes
-        currentRegistry && 
+        currentRegistry &&
         allRepositories.length > 0 &&
         // Ensure we have repositories for this registry
-        allRepositories.some(repo => repo.registryId === currentRegistry.id) &&
-        // Ensure data is actually displayed, not just stored
-        displayedRepos.length > 0;
-      
+        allRepositories.some(repo => repo.registryId === currentRegistry.id);
+
       if (hasValidCachedDataForCurrentRegistry) {
         console.log('Using cached repositories for current registry');
-        
-        // Ensure displayed repositories are properly filtered based on view mode
-        if (viewMode === 'current') {
-          // Only show repositories from current registry
-          const filteredRepos = allRepositories.filter(
-            (repo: Repository) => repo.registryId === currentRegistry.id
-          );
-          
-          // Apply pagination to update displayed repos
-          const startIndex = (currentPage - 1) * pageSize;
-          const endIndex = startIndex + pageSize;
-          const reposToDisplay = filteredRepos.slice(startIndex, endIndex);
-          setDisplayedRepos(reposToDisplay);
-          
-          if (process.env.NODE_ENV === 'development') {
-            console.log(`Displaying ${reposToDisplay.length} of ${filteredRepos.length} repos for current registry`);
-          }
-        } else {
-          // Show all repositories with pagination
-          const startIndex = (currentPage - 1) * pageSize;
-          const endIndex = startIndex + pageSize;
-          const reposToDisplay = allRepositories.slice(startIndex, endIndex);
-          setDisplayedRepos(reposToDisplay);
-          
-          if (process.env.NODE_ENV === 'development') {
-            console.log(`Displaying ${reposToDisplay.length} of ${allRepositories.length} repos for all registries`);
-          }
-        }
-        
-        // Only mark initial load as complete if we actually have displayable data
-        if (displayedRepos.length > 0) {
-          setInitialLoadComplete(true);
-            if (process.env.NODE_ENV === 'development') {
-            console.log('Initial load marked as complete with cached data');
-          }
-        } else {
-          if (process.env.NODE_ENV === 'development') {
-            console.log('No displayed repositories despite valid cache, keeping initialLoadComplete = false');
-          }
-        }
-        
+        // displayedRepos is derived from allRepositories; nothing to recompute.
+        setInitialLoadComplete(true);
         setLoading(false);
-        
-        // Update loading state
-            if (typeof window !== 'undefined') {
+
+        if (typeof window !== 'undefined') {
           (window as any).__loadingState.loading = false;
-          (window as any).__loadingState.displayedReposCount = displayedRepos.length;
+          (window as any).__loadingState.displayedReposCount = allRepositories.length;
         }
-        
+
         return;
       }
 
       const selectedRegistry = currentRegistry || (availableRegistries.length > 0 ? availableRegistries[0] : null);
-      
+
       if (!selectedRegistry) {
         console.log('No registry selected, redirecting to home');
         router.push('/');
         return;
       }
-      
+
+      // If we fell back to the first available registry (no current registry set),
+      // make it current so the derived `displayedRepos` memo can resolve it in
+      // "current" view mode (otherwise the load succeeds but renders empty).
+      if (!currentRegistry && selectedRegistry.id) {
+        registryService.setCurrentRegistry(selectedRegistry.id);
+        setRegistryFilter(selectedRegistry.id);
+      }
+
       console.log(`Loading repositories for registry: ${selectedRegistry.server}`);
       
       // Create a cache key for this fetch
@@ -414,32 +377,18 @@ function RegistryPageContent() {
             // Create repository objects from cache
             const repoList = cachedData.data;
             
-            // Update repositories
+            // Update repositories (displayedRepos derives from this).
             setAllRepositories(repoList);
-            
-            // Apply display filters
-            if (viewMode === 'current') {
-              const filteredRepos = repoList.filter(
-                (repo: Repository) => repo.registryId === selectedRegistry.id
-              );
-              const startIndex = (currentPage - 1) * pageSize;
-              const endIndex = startIndex + pageSize;
-              setDisplayedRepos(filteredRepos.slice(startIndex, endIndex));
-            } else {
-              const startIndex = (currentPage - 1) * pageSize;
-              const endIndex = startIndex + pageSize;
-              setDisplayedRepos(repoList.slice(startIndex, endIndex));
-            }
-            
+
             setInitialLoadComplete(true);
             setLoading(false);
-            
+
             // Update loading state
             if (typeof window !== 'undefined') {
               (window as any).__loadingState.loading = false;
-              (window as any).__loadingState.displayedReposCount = displayedRepos.length;
+              (window as any).__loadingState.displayedReposCount = repoList.length;
             }
-            
+
             return;
           }
         }
@@ -457,67 +406,28 @@ function RegistryPageContent() {
         registryId: selectedRegistry.id
       }));
       
-      // Update the main repository list
+      // Update the main repository list (displayedRepos derives from this).
       setAllRepositories(repoList);
-      
-      // Explicitly update displayed repositories based on the loaded data
-      if (viewMode === 'current') {
-        // Filter to show only repositories from the current registry
-        const filteredRepos = repoList.filter(
-          (repo: Repository) => repo.registryId === selectedRegistry.id
+
+      // In "all" mode, merge the newly loaded repositories with those already in
+      // memory from other registries so the catalog spans every connected registry.
+      if (viewMode === 'all' && allRepositories.length > 0 && selectedRegistry.id) {
+        // Drop any existing repos for this registry to avoid duplicates, then merge.
+        const existingRepos = allRepositories.filter(
+          repo => repo.registryId !== selectedRegistry.id
         );
-        
-        // Apply pagination
-        const startIndex = (currentPage - 1) * pageSize;
-        const endIndex = startIndex + pageSize;
-        const reposToDisplay = filteredRepos.slice(startIndex, endIndex);
-        
-        // Verify we have data to display, otherwise try to show all repositories
-        if (reposToDisplay.length === 0 && repoList.length > 0) {
-          console.warn('No repositories for current registry after filtering, showing first page of all repos');
-          const startIndex = 0;
-          const endIndex = Math.min(pageSize, repoList.length);
-          setDisplayedRepos(repoList.slice(startIndex, endIndex));
-        } else {
-          setDisplayedRepos(reposToDisplay);
-        }
-      } else {
-        // All mode - we need to make sure we display ALL repositories from ALL registries
-        // First check if we already have repositories in memory from other registries
-        if (allRepositories.length > 0 && selectedRegistry.id) {
-          // Filter out repositories from current registry to avoid duplicates
-          const existingRepos = allRepositories.filter(
-            repo => repo.registryId !== selectedRegistry.id
-          );
-          
-          // Combine with newly loaded repositories
-          const combinedRepos = [...existingRepos, ...repoList];
-          
-          // Sort repositories by registry first, then by name
-          const sortedRepos = combinedRepos.sort((a, b) => {
-            const registryCompare = a.registry.localeCompare(b.registry);
-            if (registryCompare !== 0) {
-              return registryCompare;
-            }
-            return a.name.localeCompare(b.name);
-          });
-          
-          // Update allRepositories with the combined list
-          setAllRepositories(sortedRepos);
-          
-          // Show first page of all repositories
-          const startIndex = (currentPage - 1) * pageSize;
-          const endIndex = Math.min(startIndex + pageSize, sortedRepos.length);
-          console.log(`Showing combined ${endIndex - startIndex} of ${sortedRepos.length} repositories from all registries`);
-          setDisplayedRepos(sortedRepos.slice(startIndex, endIndex));
-        } else {
-          // Just show repositories from this registry if we don't have others
-          // Apply pagination to loaded repositories
-          const startIndex = (currentPage - 1) * pageSize;
-          const endIndex = Math.min(startIndex + pageSize, repoList.length);
-          console.log(`Showing ${endIndex - startIndex} of ${repoList.length} repositories from registry`);
-          setDisplayedRepos(repoList.slice(startIndex, endIndex));
-        }
+        const combinedRepos = [...existingRepos, ...repoList];
+
+        // Sort by registry first, then by name.
+        const sortedRepos = combinedRepos.sort((a, b) => {
+          const registryCompare = a.registry.localeCompare(b.registry);
+          if (registryCompare !== 0) {
+            return registryCompare;
+          }
+          return a.name.localeCompare(b.name);
+        });
+
+        setAllRepositories(sortedRepos);
       }
       
       // Count repositories and tags for each registry
@@ -528,34 +438,11 @@ function RegistryPageContent() {
       setRegistryRepoCounts(repoCountsByRegistry);
       }
       
-      // Verify data was actually loaded and displayed before marking complete
-      if (repoList.length > 0 && displayedRepos.length > 0) {
-        console.log(`Successfully loaded and displayed ${displayedRepos.length} of ${repoList.length} repositories`);
-        // Only mark initial load as complete if we actually have data to display
-        setInitialLoadComplete(true);
-        if (process.env.NODE_ENV === 'development') {
-          console.log('Initial load marked as complete with fresh data');
-        }
-      } else if (repoList.length > 0 && displayedRepos.length === 0) {
-        // Insert a final check to ensure displayedRepos actually gets populated
-        // This handles the case where the state update hasn't taken effect by this point
-        console.log('Force displaying first page of repositories');
-        const startIndex = 0;
-        const endIndex = Math.min(pageSize, repoList.length);
-        setDisplayedRepos(repoList.slice(startIndex, endIndex));
-        setInitialLoadComplete(true);
-      } else if (repoList.length === 0) {
-        // If we have no repositories at all, that's a valid state - we're just empty
-        console.log('No repositories available for this registry');
-        setInitialLoadComplete(true);
-      } else {
-        console.warn('No repositories were loaded or displayed, UI may appear empty');
-        // If we have no data to display, don't mark initial load as complete yet
-        // This will allow the skeleton loaders to remain visible
-        if (process.env.NODE_ENV === 'development') {
-          console.log('Keeping initialLoadComplete = false due to no displayable data');
-        }
-      }
+      // The fetch completed (repoList may be empty for a registry with no repos,
+      // which is a valid state). Mark the initial load complete; the derived
+      // displayedRepos memo renders whatever matches the current filters.
+      console.log(`Loaded ${repoList.length} repositories for ${selectedRegistry.server}`);
+      setInitialLoadComplete(true);
     } catch (error) {
       console.error('Failed to load repositories:', error);
       setError('Failed to load repositories. Please try again.');
@@ -566,115 +453,30 @@ function RegistryPageContent() {
       }
     } finally {
       setLoading(false);
-      
+
       // Update loading state
       if (typeof window !== 'undefined') {
         (window as any).__loadingState.loading = false;
-        (window as any).__loadingState.displayedReposCount = displayedRepos.length;
+        (window as any).__loadingState.displayedReposCount = allRepositories.length;
       }
     }
   }, [
-    loading, 
-    availableRegistries, 
-    allRepositories, 
+    loading,
+    availableRegistries,
+    allRepositories,
     viewMode,
     searchType,
     router,
-    searchQuery,
-    currentPage,
-    displayedRegistries.length,
-    displayedRepos.length,
-    setAllRepositories, 
-    setDisplayedRepos,
+    setAllRepositories,
     setRegistryRepoCounts,
+    setRegistryFilter,
     setLoading,
-    validateCacheEntry,
-    pageSize
+    validateCacheEntry
   ]);
 
-  // Function to get filtered repositories based on current search
-  const getFilteredRepositories = useCallback(() => {
-    if (searchType === 'registry') {
-      // Registry search doesn't deal with repositories
-      return [];
-    }
-    
-    // If no search query, return all repositories (filtered by view mode)
-    if (!searchQuery.trim()) {
-      if (viewMode === 'all') {
-        // In "all" mode, return all repositories from all registries
-        // Make sure we're returning the complete list
-        if (allRepositories.length > 0) {
-          // Sort repositories by registry first, then by name for consistency
-          const sortedAllRepos = [...allRepositories].sort((a, b) => {
-            const registryCompare = a.registry.localeCompare(b.registry);
-            if (registryCompare !== 0) {
-              return registryCompare;
-            }
-            return a.name.localeCompare(b.name);
-          });
-          
-          return sortedAllRepos;
-        }
-        
-        return allRepositories;
-      } else {
-        // Filter by current registry
-        const currentRegistry = registryService.getCurrentRegistry();
-        const filteredRepos = currentRegistry ? 
-          allRepositories.filter(repo => repo.registryId === currentRegistry.id) : 
-          [];
-        return filteredRepos;
-      }
-    }
-    
-    const lowerQuery = searchQuery.toLowerCase();
-    let filteredRepos = allRepositories;
-    
-    // First filter by view mode
-    if (viewMode === 'current') {
-      const currentRegistry = registryService.getCurrentRegistry();
-      filteredRepos = currentRegistry ? 
-        filteredRepos.filter(repo => repo.registryId === currentRegistry.id) : 
-        [];
-    } else {
-      // In "all" mode, keep all repositories from all registries
-    }
-    
-    // Then filter by search type
-    if (searchType === 'repository' || searchType === 'all') {
-      filteredRepos = filteredRepos.filter(repo => repo.name.toLowerCase().includes(lowerQuery));
-    }
-    
-    if (searchType === 'all') {
-      // Also include registry matches for 'all' search
-      const registryMatches = allRepositories.filter(repo => 
-        repo.registry.toLowerCase().includes(lowerQuery) &&
-        (viewMode === 'all' || repo.registryId === registryService.getCurrentRegistry()?.id)
-      );
-      
-      // Combine unique results
-      const repoMap = new Map<string, Repository>();
-      [...filteredRepos, ...registryMatches].forEach(repo => {
-        repoMap.set(`${repo.registry}-${repo.name}`, repo);
-      });
-      
-      filteredRepos = Array.from(repoMap.values());
-      
-      // Sort results by registry then by name when in "all" mode
-      if (viewMode === 'all') {
-        filteredRepos.sort((a, b) => {
-          const registryCompare = a.registry.localeCompare(b.registry);
-          if (registryCompare !== 0) {
-            return registryCompare;
-          }
-          return a.name.localeCompare(b.name);
-        });
-      }
-    }
-    
-    return filteredRepos;
-  }, [allRepositories, searchQuery, searchType, viewMode]);
+  // The full filtered+sorted list (all pages), derived once in the memo above.
+  // Kept as a function for the existing call sites (pagination footer counts).
+  const getFilteredRepositories = useCallback(() => filteredRepositories, [filteredRepositories]);
 
   // Function to handle search when registry type is selected
   const handleRegistrySearch = (query: string) => {
@@ -780,86 +582,24 @@ function RegistryPageContent() {
   // Main search handler that delegates to specific search handlers
   const handleSearch = useCallback((query: string) => {
     // Prevent duplicate search calls with the same query
-    if (query === searchQuery && displayedRepos.length > 0) {
+    if (query === searchQuery && allRepositories.length > 0) {
       console.log(`Search already applied for query: "${query}", skipping duplicate search`);
       return;
     }
-    
+
     console.log(`Search triggered with query: "${query}", search type: ${searchType}`);
-    
+
     // Update the search query state
     setSearchQuery(query);
-    
+
     if (searchType === 'registry') {
       handleRegistrySearch(query);
     } else {
-      // For repository searches, first determine which repositories to filter
-      let reposToFilter: Repository[] = [];
-      
-      if (viewMode === 'all') {
-        // Use all repositories in "all" mode
-        reposToFilter = allRepositories;
-      } else {
-        // Use only repositories from current registry in "current" mode
-        const currentRegistry = registryService.getCurrentRegistry();
-        if (currentRegistry) {
-          reposToFilter = allRepositories.filter(
-            repo => repo.registryId === currentRegistry.id
-          );
-        }
-      }
-      
-      // Apply the search filter with the selected repositories
-      // eslint-disable-next-line react-hooks/immutability -- hoisted const arrow used before declaration; pre-existing
-      applySearchFilter(reposToFilter, query, 1);
+      // Repository search: the derived `displayedRepos` memo filters by the new
+      // query; just jump back to the first page of results.
+      setCurrentPage(1);
     }
-  }, [searchType, viewMode, allRepositories, searchQuery, displayedRepos.length]);
-
-  // Apply search filter to repositories
-  const applySearchFilter = useCallback((repos: Repository[], query: string, forcePage?: number) => {
-    console.log(`Applying search filter to ${repos.length} repositories with query: "${query}"`);
-    
-    // Filter repositories based on the search query
-    const filtered = query.trim()
-      ? repos.filter(repo => 
-          repo.name.toLowerCase().includes(query.toLowerCase())
-        )
-      : repos;
-    
-    // Sort filtered repositories by registry (if in "all" mode) and then by name
-    const sorted = [...filtered].sort((a, b) => {
-      if (viewMode === 'all') {
-        // First sort by registry
-        const registryCompare = a.registry.localeCompare(b.registry);
-        if (registryCompare !== 0) {
-          return registryCompare;
-        }
-      }
-      // Then sort by repository name
-      return a.name.localeCompare(b.name);
-    });
-    
-    console.log(`Filter found ${sorted.length} matching repositories`);
-    
-    // Calculate total pages
-    const totalPages = Math.max(1, Math.ceil(sorted.length / pageSize));
-    
-    // Determine which page to use
-    const pageToUse = forcePage ? forcePage : Math.min(currentPage, totalPages);
-    
-    // Only reset current page if explicitly forced or if current page is invalid
-    if (forcePage || pageToUse !== currentPage) {
-      setCurrentPage(pageToUse);
-    }
-    
-    // Calculate which repositories to display based on pagination
-    const startIndex = (pageToUse - 1) * pageSize;
-    const endIndex = Math.min(startIndex + pageSize, sorted.length);
-    const reposToDisplay = sorted.slice(startIndex, endIndex);
-    
-    // Actually update the displayed repositories
-    setDisplayedRepos(reposToDisplay);
-  }, [pageSize, currentPage, viewMode]);
+  }, [searchType, searchQuery, allRepositories.length, setSearchQuery, setCurrentPage]);
 
   // First load repositories
   useEffect(() => {
@@ -893,37 +633,36 @@ function RegistryPageContent() {
     // Get the current registry ID - this is what we're currently displaying
     const currentRegistryId = registryService.getCurrentRegistryId();
     
-    // Check if displayed repositories actually match the current registry
-    const displayedReposMatchCurrentRegistry = 
-      viewMode === 'current' && 
-      displayedRepos.length > 0 && 
-      currentRegistryId && 
-      displayedRepos.every(repo => repo.registryId === currentRegistryId);
-    
+    // Check if we already have repositories loaded for the current registry.
+    const haveReposForCurrentRegistry =
+      viewMode === 'current' &&
+      !!currentRegistryId &&
+      allRepositories.some(repo => repo.registryId === currentRegistryId);
+
     // Skip loading if we already have data that matches what we need
-    if (loadingInitiated.current && 
-      initialLoadComplete && 
-      displayedRepos.length > 0 &&
-        (viewMode !== 'current' || displayedReposMatchCurrentRegistry)) {
+    if (loadingInitiated.current &&
+      initialLoadComplete &&
+      allRepositories.length > 0 &&
+        (viewMode !== 'current' || haveReposForCurrentRegistry)) {
       console.log('Skipping repository load - criteria for skipping met');
       return;
     }
-    
+
     // Also skip if initial load completed with no repositories
     // (e.g., registry doesn't support catalog listing like docker.io or registry.k8s.io)
-    if (loadingInitiated.current && initialLoadComplete && 
-        allRepositories.length === 0 && displayedRepos.length === 0) {
+    if (loadingInitiated.current && initialLoadComplete &&
+        allRepositories.length === 0) {
       console.log('Skipping repository load - no repositories available for this registry');
       return;
     }
-    
+
     // Set the loading initiated flag
     loadingInitiated.current = true;
-    
+
     // Load repositories
       loadRepositories();
-    
-  }, [registryFilter, initialLoadComplete, displayedRepos, viewMode, loadRepositories]);
+
+  }, [registryFilter, initialLoadComplete, allRepositories, viewMode, loadRepositories]);
   
   // Update loadRepositoriesFromAllRegistries to use cache validation and fetchRepositoriesForRegistry
   const loadRepositoriesFromAllRegistries = async (forceReload = false) => {
@@ -1062,20 +801,13 @@ function RegistryPageContent() {
         return a.name.localeCompare(b.name);
       });
       
-      // Update the main repository list with all repositories
+      // Update the main repository list with all repositories (displayedRepos
+      // derives from this).
       setAllRepositories(allReposList);
-      
+
       // Set the count of repositories per registry
       setRegistryRepoCounts(repoCountsByRegistry);
-      
-      // Always update displayed repos — this function is only called when switching
-      // to "all" mode, so we display the fresh data directly instead of relying on
-      // the (potentially stale) viewMode closure
-      const startIndex = (currentPage - 1) * pageSize;
-      const endIndex = Math.min(startIndex + pageSize, allReposList.length);
-      setDisplayedRepos(allReposList.slice(startIndex, endIndex));
-      console.log(`Updated displayed repositories with ${endIndex - startIndex} items (total: ${allReposList.length})`);
-      
+
       // Mark initial load as complete
       setInitialLoadComplete(true);
       
@@ -1421,11 +1153,8 @@ function RegistryPageContent() {
     );
   };
 
-  // Calculate if there are more pages
-  const getTotalPages = () => {
-    const filteredRepos = getFilteredRepositories();
-    return Math.ceil(filteredRepos.length / pageSize);
-  };
+  // Total pages for the filtered list, derived once in the memo above.
+  const getTotalPages = () => filteredTotalPages;
 
   // Function to get placeholder text based on search type
   const getSearchPlaceholder = (): string => {
@@ -1468,28 +1197,8 @@ function RegistryPageContent() {
     );
   }, []);
 
-  // Ensure repositories are properly filtered when view mode changes
-  useEffect(() => {
-    // Skip on initial load - we handle that elsewhere
-    if (!initialLoadComplete) return;
-    
-    // Update displayed repositories based on view mode
-    if (searchType !== 'registry') {
-      // Get filtered repositories based on current search and view mode
-      const filteredRepos = getFilteredRepositories();
-      
-      // Apply pagination to update displayed repos
-      const startIndex = (currentPage - 1) * pageSize;
-      const endIndex = startIndex + pageSize;
-      
-      // Update the displayed repositories
-      setDisplayedRepos(filteredRepos.slice(startIndex, endIndex));
-      
-      if (process.env.NODE_ENV === 'development') {
-        console.log(`View mode changed to: ${viewMode}, filtering ${filteredRepos.length} repositories`);
-      }
-    }
-  }, [viewMode, initialLoadComplete, searchType, getFilteredRepositories, currentPage, pageSize, setDisplayedRepos]);
+  // (View-mode/search/page filtering is handled by the derived `displayedRepos`
+  // memo near the top of the component — no effect needed.)
 
   // Function to force reload all data - can be used to recover from stale state
   const forceReloadRepositories = useCallback(async () => {
@@ -1547,23 +1256,23 @@ function RegistryPageContent() {
         
         // Only attempt recovery if initial load hasn't completed yet.
         // If it completed with 0 repos, that's a valid final state — don't loop.
-        if (!initialLoadComplete && (allRepositories.length === 0 || displayedRepos.length === 0)) {
+        if (!initialLoadComplete && allRepositories.length === 0) {
           console.log('No repository data available, attempting recovery reload');
           forceReloadRepositories();
         }
-        
+
         // Always mark initial load complete to avoid blank screens
         setInitialLoadComplete(true);
       }, 15000); // 15 seconds is usually more than enough for any real load
     }
-    
+
     return () => {
       // Clean up timeout on unmount or when loading state changes
       if (loadingTimeoutId) {
         clearTimeout(loadingTimeoutId);
       }
     };
-  }, [loading, allRepositories.length, displayedRepos.length, forceReloadRepositories, initialLoadComplete]);
+  }, [loading, allRepositories.length, forceReloadRepositories, initialLoadComplete]);
 
   // Debug effect to monitor loading state changes
   useEffect(() => {
@@ -1574,7 +1283,7 @@ function RegistryPageContent() {
         console.log('Current repositories state:', {
           allRepositoriesCount: allRepositories.length,
           displayedReposCount: displayedRepos.length,
-          initialLoadComplete
+          initialLoadComplete,
         });
       }
     }
@@ -1626,7 +1335,7 @@ function RegistryPageContent() {
         return 'Repository reload triggered';
       };
     }
-  }, [loading, initialLoadComplete, allRepositories.length, displayedRepos.length]);
+  }, [loading, initialLoadComplete, allRepositories.length]);
 
   // Add this function near the other loading functions
   const loadRepositoriesForCurrentRegistry = async () => {
@@ -1668,18 +1377,11 @@ function RegistryPageContent() {
       
       console.log(`Got ${repoList.length} repositories directly`);
       
-      // Update repositories and ensure they are displayed
+      // Update repositories (displayedRepos derives from this).
       setAllRepositories(repoList);
-      
-      // Always display first page of repositories
-      const startIndex = 0;
-      const endIndex = Math.min(pageSize, repoList.length);
-      const reposToDisplay = repoList.slice(startIndex, endIndex);
-      
-      setDisplayedRepos(reposToDisplay);
       setInitialLoadComplete(true);
-      
-      console.log(`Direct load complete, displayed ${reposToDisplay.length} repositories`);
+
+      console.log(`Direct load complete, loaded ${repoList.length} repositories`);
     } catch (error) {
       console.error("Direct repository load failed:", error);
       setError("Failed to load repositories directly. Please try again.");
@@ -1710,19 +1412,8 @@ function RegistryPageContent() {
     if (process.env.NODE_ENV === 'development') {
       console.log(`Changing to page ${newPage}`);
     }
-    
-    // Save new page
+    // The displayed slice is derived from currentPage; just update the page.
     setCurrentPage(newPage);
-    
-    // Get filtered repos
-    const filteredRepos = getFilteredRepositories();
-    
-    // Apply pagination
-    const startIndex = (newPage - 1) * pageSize;
-    const endIndex = startIndex + pageSize;
-    
-    // Update displayed repos
-    setDisplayedRepos(filteredRepos.slice(startIndex, endIndex));
   };
 
   // Toggle view mode between "current" and "all"
@@ -1778,56 +1469,12 @@ function RegistryPageContent() {
       }
     }
     
-    // If we have repositories loaded, filter immediately without an API call
-    if (allRepositories.length > 0) {
-      setLoading(true);
-      try {
-        if (newMode === 'current') {
-          // Show only current registry repositories
-        const currentRegistry = registryService.getCurrentRegistry();
-          if (currentRegistry && currentRegistry.id) {
-          const filteredRepos = allRepositories.filter(
-              (repo: Repository) => repo.registryId === currentRegistry.id
-          );
-          
-          // Apply pagination
-            const startIndex = (currentPage - 1) * pageSize;
-            const endIndex = Math.min(startIndex + pageSize, filteredRepos.length);
-          setDisplayedRepos(filteredRepos.slice(startIndex, endIndex));
-            
-            console.log(`Toggled to current mode: filtered to ${filteredRepos.length} repositories`);
-          }
-        } else {
-          // Show all repositories across ALL registries (not just filtered ones)
-          // Make sure we're sorting consistently
-          const sortedRepos = [...allRepositories].sort((a, b) => {
-            // First by registry
-            const registryCompare = a.registry.localeCompare(b.registry);
-            if (registryCompare !== 0) {
-              return registryCompare;
-            }
-            // Then by name
-            return a.name.localeCompare(b.name);
-          });
-          
-          // When in "all" mode, always take repositories from ALL registries up to the page size
-          const startIndex = (currentPage - 1) * pageSize;
-          const endIndex = Math.min(startIndex + pageSize, sortedRepos.length);
-          const reposToDisplay = sortedRepos.slice(startIndex, endIndex);
-          setDisplayedRepos(reposToDisplay);
-          
-          console.log(`Toggled to all mode: showing ${reposToDisplay.length} repositories from all registries (total: ${sortedRepos.length})`);
-        }
-    } catch (error) {
-        console.error('Error applying view mode filter:', error);
-      } finally {
-        setLoading(false);
-      }
-    } else {
-      // If no repositories are loaded, trigger a load
+    // If repositories are already loaded, the derived `displayedRepos` memo
+    // reflects the new view mode automatically. Otherwise, trigger a load.
+    if (allRepositories.length === 0) {
       loadRepositories();
     }
-  }, [viewMode, setViewMode, allRepositories, currentPage, pageSize, setDisplayedRepos, setLoading, loadRepositories, setRegistryFilter]);
+  }, [viewMode, setViewMode, allRepositories, setLoading, loadRepositories, setRegistryFilter]);
 
   // Function to change search type
   const changeSearchType = (type: SearchType) => {
@@ -1839,124 +1486,22 @@ function RegistryPageContent() {
     // Reset pagination
     setCurrentPage(1);
     
-    // Preserve registry filter when switching search types
-    // This ensures registry filter button works in all view modes
     if (type === 'registry') {
-      // When switching to registry search, show all registries initially
-      setDisplayedRepos([]);
-      
-      // Get all available registries to display
+      // Registry search shows the list of registries; displayedRepos is empty
+      // for this search type (handled by the selector).
       const allRegistriesToDisplay = registryService.getAllRegistries();
       setDisplayedRegistries(allRegistriesToDisplay);
-    } else {
-      // Re-apply current search to the new search type
-      if (searchQuery) {
-        handleSearch(searchQuery);
-      } else {
-        // If no search query, use current filters to reload repositories
-        if (viewMode === 'all') {
-          // Show all repositories
-          const startIndex = 0; // Page 1
-          const endIndex = pageSize;
-          setDisplayedRepos(allRepositories.slice(startIndex, endIndex));
-        } else if (registryFilter) {
-          // Filter by specific registry if set
-          const filteredRepos = allRepositories.filter(
-            (repo: Repository) => repo.registryId === registryFilter
-          );
-          const startIndex = 0; // Page 1
-          const endIndex = pageSize;
-          setDisplayedRepos(filteredRepos.slice(startIndex, endIndex));
-        } else {
-          // Filter by current registry 
-          const currentRegistry = registryService.getCurrentRegistry();
-          if (currentRegistry && currentRegistry.id) {
-            const filteredRepos = allRepositories.filter(
-              (repo: Repository) => repo.registryId === currentRegistry.id
-            );
-            const startIndex = 0; // Page 1
-            const endIndex = pageSize;
-            setDisplayedRepos(filteredRepos.slice(startIndex, endIndex));
-          }
-        }
-      }
+    } else if (searchQuery) {
+      // Re-apply the current query under the new search type.
+      handleSearch(searchQuery);
     }
+    // With no query, the derived `displayedRepos` memo already reflects the new
+    // search type — nothing else to do.
   };
 
-  // Add a useEffect to handle registry filter changes
-  useEffect(() => {
-    if (initialLoadComplete && allRepositories.length > 0) {
-      // Check if this was triggered by a dropdown selection or card click - if so, don't override view mode
-      const wasDropdownOrCardSelection = typeof window !== 'undefined' && 
-                                      ((window as any).__selectedFromDropdown === true || 
-                                       (window as any).__selectedFromCard === true);
-      
-      // Reset the selection flags
-      if (wasDropdownOrCardSelection && typeof window !== 'undefined') {
-        (window as any).__selectedFromDropdown = false;
-        (window as any).__selectedFromCard = false;
-      }
-      
-      console.log(`Registry filter changed to: ${registryFilter || 'all'}, viewMode: ${viewMode}, wasDropdownOrCardSelection: ${wasDropdownOrCardSelection}`);
-      
-      try {
-        // Apply filtering based on view mode first, then registry filter
-        if (viewMode === 'all') {
-          // In "all" mode, show all repositories from all registries combined
-          // Sort the repositories by registry first, then by name
-          let sortedRepos = [...allRepositories].sort((a, b) => {
-            // First by registry
-            const registryCompare = a.registry.localeCompare(b.registry);
-            if (registryCompare !== 0) {
-              return registryCompare;
-            }
-            // Then by name
-            return a.name.localeCompare(b.name);
-          });
-          
-          // If registry filter is applied, further filter the repositories
-        if (registryFilter) {
-            sortedRepos = sortedRepos.filter(
-            (repo: Repository) => repo.registryId === registryFilter
-          );
-            console.log(`Filtered to ${sortedRepos.length} repositories for registry: ${registryFilter} in all mode`);
-          } else {
-            console.log(`Showing all ${sortedRepos.length} repositories in all mode`);
-          }
-          
-          // Always apply pagination *after* combining and sorting all repositories
-          const startIndex = (currentPage - 1) * pageSize;
-          const endIndex = Math.min(startIndex + pageSize, sortedRepos.length);
-          setDisplayedRepos(sortedRepos.slice(startIndex, endIndex));
-          console.log(`Displaying ${endIndex - startIndex} repositories from index ${startIndex} to ${endIndex-1}`);
-        } else if (viewMode === 'current') {
-          // In current mode, show only repositories from current registry
-          // If registry filter is applied, use that, otherwise use the current registry
-          let currentRegistryId = registryFilter;
-          
-          if (!currentRegistryId) {
-            const currentRegistry = registryService.getCurrentRegistry();
-            currentRegistryId = currentRegistry?.id || '';
-          }
-          
-          if (currentRegistryId) {
-            const filteredRepos = allRepositories.filter(
-              (repo: Repository) => repo.registryId === currentRegistryId
-            );
-            
-            // Apply pagination
-          const startIndex = (currentPage - 1) * pageSize;
-            const endIndex = Math.min(startIndex + pageSize, filteredRepos.length);
-            setDisplayedRepos(filteredRepos.slice(startIndex, endIndex));
-            
-            console.log(`Filtered to ${filteredRepos.length} repositories for current registry: ${currentRegistryId}`);
-          }
-        }
-      } catch (error) {
-        console.error('Error applying registry filter:', error);
-      }
-    }
-  }, [registryFilter, initialLoadComplete, allRepositories, currentPage, pageSize, viewMode, setDisplayedRepos]);
+  // (Registry-filter changes are reflected by the derived `displayedRepos` memo.
+  // The previous effect here recomputed the list on every page change WITHOUT
+  // re-applying the search query, which is what reset the search when paging.)
 
   // Use a useEffect to initialize the view mode properly
   useEffect(() => {
@@ -2036,35 +1581,18 @@ function RegistryPageContent() {
         localStorage.setItem('viewMode', 'current');
         localStorage.setItem('allReposMode', 'false');
       }
-      
-      // If we have repositories loaded, filter immediately for the selected registry
-      if ((event.detail?.selectedFromCard || event.detail?.selectedFromDropdown || event.detail?.registryChanged) && 
-          allRepositories.length > 0) {
-          
-        const registryId = event.detail.registry;
-        if (registryId) {
-            const filteredRepos = allRepositories.filter(
-            (repo: Repository) => repo.registryId === registryId
-            );
-            
-            // Apply pagination
-            const startIndex = (currentPage - 1) * pageSize;
-            const endIndex = startIndex + pageSize;
-            setDisplayedRepos(filteredRepos.slice(startIndex, endIndex));
-            
-          console.log(`Filtered to ${filteredRepos.length} repositories for selected registry`);
-        }
-      }
+      // The displayed list updates automatically: switching the registry changes
+      // viewMode/the current registry, which the `displayedRepos` memo reacts to.
     };
-    
+
     // Add event listener
     window.addEventListener(REGISTRY_EVENTS.REGISTRY_CHANGED, handleRegistryChange as EventListener);
-    
+
     // Clean up on unmount
     return () => {
       window.removeEventListener(REGISTRY_EVENTS.REGISTRY_CHANGED, handleRegistryChange as EventListener);
     };
-  }, [setViewMode, setAvailableRegistries, allRepositories, currentPage, pageSize, setDisplayedRepos]);
+  }, [setViewMode, setAvailableRegistries]);
 
   // Add handler for registry card clicks in search results
   const handleRegistryCardClick = useCallback((registry: Registry) => {
@@ -2088,37 +1616,14 @@ function RegistryPageContent() {
       (window as any).__lastViewModeOverride = Date.now(); // Track when this happened
     }
     
-    // Immediately filter and display repositories for this registry
-    if (allRepositories.length > 0 && registry.id) {
-      setLoading(true);
-      try {
-        // Filter repositories for the selected registry
-        const filteredRepos = allRepositories.filter(
-          (repo: Repository) => repo.registryId === registry.id
-        );
-        
-        // Apply pagination to show first page
-        const startIndex = 0; // Start at first page
-        const endIndex = Math.min(startIndex + pageSize, filteredRepos.length);
-        
-        // Update displayed repositories
-        setDisplayedRepos(filteredRepos.slice(startIndex, endIndex));
-        
-        // Reset to page 1
-        setCurrentPage(1);
-        
-        console.log(`Filtered to ${filteredRepos.length} repositories for selected registry: ${registry.server}`);
-      } catch (error) {
-        console.error('Error filtering repositories for selected registry:', error);
-      } finally {
-        setLoading(false);
-      }
-    } else if (registry.id) {
-      // If we don't have repositories loaded yet, force a load
+    // Reset to page 1; the derived `displayedRepos` memo shows the selected
+    // registry's repositories automatically.
+    setCurrentPage(1);
+
+    // If we don't have repositories loaded yet, force a load (after a short delay
+    // so the registry state is fully updated first).
+    if (allRepositories.length === 0 && registry.id) {
       console.log(`No repositories loaded for ${registry.server}, triggering a load`);
-      
-      // Use the standard load mechanism after a short delay
-      // to ensure registry state is fully updated
       setTimeout(() => {
         loadRepositories();
       }, 50);
@@ -2144,7 +1649,7 @@ function RegistryPageContent() {
       }
     });
     window.dispatchEvent(event);
-  }, [setViewMode, setRegistryFilter, allRepositories, pageSize, setDisplayedRepos, loadRepositories, setCurrentPage, searchType, setSearchType, setSearchQuery]);
+  }, [setViewMode, setRegistryFilter, allRepositories, loadRepositories, setCurrentPage, searchType, setSearchType, setSearchQuery]);
 
   return (
     <div className="container mx-auto py-6 px-4 max-w-6xl">
